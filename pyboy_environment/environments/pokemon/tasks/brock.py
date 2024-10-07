@@ -24,7 +24,7 @@ class PokemonBrock(PokemonEnvironment):
             WindowEvent.PRESS_ARROW_UP,
             WindowEvent.PRESS_BUTTON_A,
             WindowEvent.PRESS_BUTTON_B,
-            WindowEvent.PRESS_BUTTON_START,
+            # WindowEvent.PRESS_BUTTON_START,
         ]
 
         release_button: list[WindowEvent] = [
@@ -34,7 +34,7 @@ class PokemonBrock(PokemonEnvironment):
             WindowEvent.RELEASE_ARROW_UP,
             WindowEvent.RELEASE_BUTTON_A,
             WindowEvent.RELEASE_BUTTON_B,
-            WindowEvent.RELEASE_BUTTON_START,
+            # WindowEvent.RELEASE_BUTTON_START,
         ]
 
         super().__init__(
@@ -50,7 +50,23 @@ class PokemonBrock(PokemonEnvironment):
     def _get_state(self) -> np.ndarray:
         # Implement your state retrieval logic here
         game_stats = self._generate_game_stats()
+
+        self.grab_frame()
         return [game_stats["badges"]]
+    
+    def reset(self) -> np.ndarray:
+        self.steps = 0
+
+        with open(self.init_path, "rb") as f:
+            self.pyboy.load_state(f)
+
+        self.prior_game_stats = self._generate_game_stats()
+
+        return self._get_state()
+    
+    @cached_property
+    def observation_space(self) -> int:
+        return len(self._get_state())
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
@@ -65,3 +81,5 @@ class PokemonBrock(PokemonEnvironment):
 
         # Maybe if we run out of pokeballs...? or a max step count
         return self.steps >= 1000
+    
+
