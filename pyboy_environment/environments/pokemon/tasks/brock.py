@@ -8,6 +8,33 @@ from pyboy_environment.environments.pokemon.pokemon_environment import (
 )
 from pyboy_environment.environments.pokemon import pokemon_constants as pkc
 
+import collections
+import cv2
+import numpy.typing as npt
+from typing import TypedDict, List
+
+
+class GameStats(TypedDict):
+    location: any
+    battle_type: str
+    current_pokemon_id: int
+    current_pokemon_health: int
+    enemy_pokemon_health: int
+    party_size: int
+    ids: List[int]
+    pokemon: List[dict]  # Assuming pkc.get_pokemon(id) returns a dict or object, you can adjust accordingly
+    levels: List[int]
+    type_id: List[int]
+    type: List[str]  # Assuming pkc.get_type(id) returns a string, modify as needed
+    hp: List[int]
+    xp: List[int]
+    status: List[str]  # Modify if the status is a different data type
+    badges: int
+    caught_pokemon: int
+    seen_pokemon: int
+    money: int
+    events: List[str]  # Assuming events are strings, adjust if needed
+    items: List[str]   # Assuming items are strings, adjust if needed
 
 class PokemonBrock(PokemonEnvironment):
     def __init__(
@@ -37,6 +64,9 @@ class PokemonBrock(PokemonEnvironment):
             # WindowEvent.RELEASE_BUTTON_START,
         ]
 
+        self.image_to_stack = collections.deque([],maxlen=3)
+        self.max_level_sum = 0
+
         super().__init__(
             act_freq=act_freq,
             task="brock",
@@ -47,12 +77,41 @@ class PokemonBrock(PokemonEnvironment):
             headless=headless,
         )
 
+        
+
+    # POSITION
+    # {
+    #     "x": x_pos,
+    #     "y": y_pos,
+    #     "map_id": map_n,
+    #     "map": pkc.get_map_location(map_n),
+    # }
+
     def _get_state(self) -> np.ndarray:
         # Implement your state retrieval logic here
         game_stats = self._generate_game_stats()
 
-        self.grab_frame()
-        return [game_stats["badges"]]
+        frame = np.array(self.screen.image) #144*160
+        frame:npt.NDArray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame.reshape((1,144,160))
+        
+        try:
+            if len(self.image_to_stack) != 3:
+                for _ in range(0,3):
+                    self.image_to_stack.append(frame)
+            else:
+                self.image_to_stack.append(frame)
+        except:
+            pass
+
+        stacked_frames = np.concatenate(list(self.image_to_stack), axis=0)
+        
+        # frame.reshape((1,144,160)) #channel, height, width
+        # print(frame.shape)
+        
+        return stacked_frames
+    
+
     
     def reset(self) -> np.ndarray:
         self.steps = 0
@@ -62,15 +121,30 @@ class PokemonBrock(PokemonEnvironment):
 
         self.prior_game_stats = self._generate_game_stats()
 
+        try:
+            self.image_to_stack.clear()
+            self.max_level_sum = 0
+        except:
+            print("No image_to_stack")
+
         return self._get_state()
     
     @cached_property
     def observation_space(self) -> int:
-        return len(self._get_state())
+        # return self._get_state().shape()
+        return (144,160)
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
-        return new_state["badges"] - self.prior_game_stats["badges"]
+        reward = -1
+        reward += self._levels_reward(new_state)
+        reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
+        reward += self._start_battle_reward(new_state) * 200
+        reward += self._pokeball_thrown_reward(new_state) * 100
+        reward += self._caught_reward(new_state) * 500
+        reward += self._bought_pokeball_reward(new_state) * 100
+
+        return reward
 
     def _check_if_done(self, game_stats: dict[str, any]) -> bool:
         # Setting done to true if agent beats first gym (temporary)
@@ -80,6 +154,119 @@ class PokemonBrock(PokemonEnvironment):
         # Implement your truncation check logic here
 
         # Maybe if we run out of pokeballs...? or a max step count
+        # not game_stats["location"]["map"] in ["PALLET_TOWN,","VIRIDIAN_CITY,","PEWTER_CITY,","REDS_HOUSE_1F,","REDS_HOUSE_2F,",
+        #     "ROUTE_1,","VIRIDIAN_POKECENTER,","VIRIDIAN_MART,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,",
+        #     "VIRIDIAN_FOREST_NORTH_GATE,", "PEWTER_GYM,", "PEWTER_MART,", ]
         return self.steps >= 1000
+    
+    ################################################################
+    ###### EXTEND ##################################################
+
+    def _get_pokeball_count(self, items) -> int:
+        total_count = 0
+
+        # Iterate through the dictionary of items the player (keys) has and their counts (values)
+        for itemId, count in items.items():
+        # Iterate through the types of Pokeballs. If the item (key) matches any of the Pokeball type ids, add the count to the total number of Pokeballs
+            if itemId in range(0x0, 0x5):
+                total_count += count
+        
+        return total_count
+    
+    def _pokeball_thrown_reward(self, new_state) -> int:
+        previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
+        new_count = self._get_pokeball_count(new_state["items"])
+
+
+        if previous_count > new_count:
+            return 1
+        else:
+            return 0
+
+    def _bought_pokeball_reward(self, new_state) -> int:
+        previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
+        new_count = self._get_pokeball_count(new_state["items"])
+
+        if new_count > previous_count:
+            return 1
+        else:
+            return 0
+
+    def _start_battle_reward(self, new_state, battle_type=1) -> int:
+        if (new_state["battle_type"] == battle_type and self.prior_game_stats["battle_type"] == 0):
+            return 1
+        return 0
+
+    def _pokeball_thrown_reward(self, new_state) -> int:
+        previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
+        new_count = self._get_pokeball_count(new_state["items"])
+
+        if previous_count > new_count:
+            return 1
+        else:
+            return 0
+
+    def _bought_pokeball_reward(self, new_state) -> int:
+        previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
+        new_count = self._get_pokeball_count(new_state["items"])
+
+        if new_count > previous_count:
+            return 1
+        else:
+            return 0
+        
+    def _read_items_(self) -> dict:
+        total_items = self._read_m(0xD31D)
+        if (total_items == 0):
+            return {}
+
+        addr = 0xD31E
+        items = {}
+
+        for i in range(total_items):
+            item_id = self._read_m(addr + 2 * i)
+            item_count = self._read_m(addr + 2 * i + 1)
+            items[item_id] = item_count
+
+        return items
+    
+
+    def _get_active_pokemon_id(self) -> int:
+        return self._read_m(0xD014)
+
+    def _get_enemy_pokemon_health(self) -> int:
+        return self._read_hp(0xCFE6)
+
+    def _get_current_pokemon_health(self) -> int:
+        return self._read_hp(0xD015)
+    
+    def _read_battle_type(self) -> int:
+        return self._read_m(0xD057)
+    
+    def _generate_game_stats(self) -> dict[str, any]:
+        # debug-log logging.info("Logging124")
+        stats:GameStats = {
+            "location": self._get_location(),
+            "battle_type": self._read_battle_type(),
+            "current_pokemon_id": self._get_active_pokemon_id(),
+            "current_pokemon_health": self._get_current_pokemon_health(),
+            "enemy_pokemon_health": self._get_enemy_pokemon_health(),
+            "party_size": self._get_party_size(),
+            "ids": self._read_party_id(),
+            "pokemon": [pkc.get_pokemon(id) for id in self._read_party_id()],
+            "levels": self._read_party_level(),
+            "type_id": self._read_party_type(),
+            "type": [pkc.get_type(id) for id in self._read_party_type()],
+            "hp": self._read_party_hp(),
+            "xp": self._read_party_xp(),
+            "status": self._read_party_status(),
+            "badges": self._get_badge_count(),
+            "caught_pokemon": self._read_caught_pokemon_count(),
+            "seen_pokemon": self._read_seen_pokemon_count(),
+            "money": self._read_money(),
+            "events": self._read_events(),
+            "items": self._read_items_(),
+        }
+        return stats
     
 
