@@ -114,10 +114,10 @@ class PokemonBrock(PokemonEnvironment):
         frame = cv2.resize(frame, (self.image_len, self.image_len))
         # Convert to BGR for use with OpenCV
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame.resize((self.image_len, self.image_len, 1))
+        frame.resize((1,self.image_len, self.image_len))
 
-        cv2.imshow('image window', frame)
-        frame = np.moveaxis(frame, -1, 0)
+        # cv2.imshow('image window', frame)
+        # frame = np.moveaxis(frame, -1, 0)
         
         #======  STACK LOGIC  ==============================
         # try:
@@ -190,7 +190,7 @@ class PokemonBrock(PokemonEnvironment):
         reward += self._bought_pokeball_reward(new_state) * 100
 
         if not new_state["location"]["map"] in ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","VIRIDIAN_MART,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,", "PEWTER_MART,", ]:
-            reward -= 500
+            reward -= 1000
 
         return reward
 
