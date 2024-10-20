@@ -137,14 +137,12 @@ class PokemonBrock(PokemonEnvironment):
             game_stats['location']['x'], 
             game_stats['location']['y'],
             game_stats['location']['map_id'],
-            self._get_pokeball_count(self._read_items_()), 
             battle_type,
             game_stats["current_pokemon_health"] if battle_type != 0 else 0,
-            game_stats["enemy_pokemon_health"] if battle_type != 0 else 0,
-            self._get_enemy_catch_rate() if battle_type == 1 else 0
+            game_stats["enemy_pokemon_health"] if battle_type != 0 else 0
         ]
 
-        # print(info_vector)
+        print(info_vector)
         
         return {
             "image" : frame,
@@ -175,19 +173,25 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (1, self.image_len, self.image_len),
-            #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
-            "vector": 3 +        1+            1+                1+         1+             1
+            #       coord | battle flag ||| my poke hp, other poke hp
+            "vector": 3 +        1+            1+             1                
         }
+    
+    #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
+    #        "vector": 3 +        1+            1+                1+         1+             1
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
         reward = -1
         reward += self._levels_reward(new_state)
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 200
-        reward += self._pokeball_thrown_reward(new_state) * 100
-        reward += self._caught_reward(new_state) * 500
-        reward += self._bought_pokeball_reward(new_state) * 100
+        reward += self._start_battle_reward(new_state) * 100
+        reward += self._xp_increase_reward(new_state) * 10
+        reward += self._enemy_health_decrease_reward(new_state) * 10
+        reward += self._levels_increase_reward(new_state) * 1000
+        # reward += self._pokeball_thrown_reward(new_state) * 100
+        # reward += self._caught_reward(new_state) * 500
+        # reward += self._bought_pokeball_reward(new_state) * 100
 
         if not new_state["location"]["map"] in ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","VIRIDIAN_MART,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,", "PEWTER_MART,", ]:
             reward -= 1000
@@ -326,4 +330,26 @@ class PokemonBrock(PokemonEnvironment):
         else:
             return 0
     
+    def _enemy_health_decrease_reward(self, new_state: dict[str, any]) -> int:
+        if (new_state["battle_type"] != 0 and self.prior_game_stats["battle_type"] != 0):
+            previous_health = self.prior_game_stats["enemy_pokemon_health"]
+            current_health = new_state["enemy_pokemon_health"]
+
+            health_decrease = previous_health - current_health
+            
+            return max(0, health_decrease) # Doesn't punish when enemy health goes up
+        return 0
+    
+    def _xp_increase_reward(self, new_state: dict[str, any]) -> int:
+        return sum(new_state["xp"]) - sum(self.prior_game_stats["xp"])
+    
+
+    def _levels_increase_reward(self, new_state: dict[str, any]) -> int:
+        reward = 0
+        new_levels = new_state["levels"]
+        old_levels = self.prior_game_stats["levels"]
+        for i in range(len(new_levels)):
+            if (old_levels[i] != 0):
+                reward += (new_levels[i] / old_levels[i] - 1)
+        return reward
 
