@@ -177,7 +177,7 @@ class PokemonBrock(PokemonEnvironment):
             game_stats["enemy_pokemon_health"] if battle_type != 0 else 0
         ]
 
-        print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
+        # print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
         
         return {
             "image" : frame,
@@ -238,8 +238,8 @@ class PokemonBrock(PokemonEnvironment):
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
             reward =  -200
 
-        # if new_state['location']['map'] == "OAKS_LAB,":
-        #     reward -= 1
+        if new_state['location']['map'] == "OAKS_LAB,":
+            reward -= 1
         
         if self.same_loc_cnt >= 10:
             reward -= 50
