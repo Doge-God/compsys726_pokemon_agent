@@ -98,6 +98,9 @@ class PokemonBrock(PokemonEnvironment):
         self.past_loc = None
         self.same_loc_cnt = 0
 
+        self.last_img = np.zeros((self.image_len, self.image_len))
+        self.last_img_diff_cnt = 100
+
     # POSITION
     # {
     #     "x": x_pos,
@@ -184,6 +187,8 @@ class PokemonBrock(PokemonEnvironment):
         self.past_loc = None
         self.same_loc_cnt = 0
 
+        self.last_img = np.zeros((self.image_len, self.image_len))
+
         # try:
         #     self.image_to_stack.clear()
         #     self.max_level_sum = 0
@@ -207,7 +212,6 @@ class PokemonBrock(PokemonEnvironment):
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
-        reward = -1
         reward += self._levels_reward(new_state) * 1000
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
         reward += self._start_battle_reward(new_state) * 20
@@ -219,7 +223,7 @@ class PokemonBrock(PokemonEnvironment):
         # reward += self._bought_pokeball_reward(new_state) * 100
 
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
-            reward =  -1000
+            reward =  -200
 
         if new_state['location']['map'] == "OAKS_LAB,":
             reward -= 1
