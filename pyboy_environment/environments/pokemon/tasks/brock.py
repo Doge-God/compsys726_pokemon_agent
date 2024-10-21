@@ -100,6 +100,7 @@ class PokemonBrock(PokemonEnvironment):
 
         self.last_img = np.zeros((self.image_len, self.image_len))
         self.last_img_diff_cnt = 100
+        self.same_img_cnt = 0
 
     # POSITION
     # {
@@ -134,6 +135,15 @@ class PokemonBrock(PokemonEnvironment):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         frame.resize((1,self.image_len, self.image_len))
 
+
+        self.last_img_diff_cnt = np.sum(self.last_img != frame)
+        self.last_img = frame
+
+        if self.last_img_diff_cnt <= 2:
+            self.same_img_cnt += 1
+        else:
+            self.same_img_cnt = 0
+
         # cv2.imshow('image window', frame)
         # frame = np.moveaxis(frame, -1, 0)
         
@@ -167,7 +177,7 @@ class PokemonBrock(PokemonEnvironment):
             game_stats["enemy_pokemon_health"] if battle_type != 0 else 0
         ]
 
-        print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}")
+        print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
         
         return {
             "image" : frame,
@@ -188,6 +198,8 @@ class PokemonBrock(PokemonEnvironment):
         self.same_loc_cnt = 0
 
         self.last_img = np.zeros((self.image_len, self.image_len))
+        self.same_img_cnt = 0
+        self.last_img_diff_cnt = 100
 
         # try:
         #     self.image_to_stack.clear()
@@ -212,6 +224,7 @@ class PokemonBrock(PokemonEnvironment):
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
+        reward = -1
         reward += self._levels_reward(new_state) * 1000
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
         reward += self._start_battle_reward(new_state) * 20
@@ -225,11 +238,14 @@ class PokemonBrock(PokemonEnvironment):
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
             reward =  -200
 
-        if new_state['location']['map'] == "OAKS_LAB,":
-            reward -= 1
+        # if new_state['location']['map'] == "OAKS_LAB,":
+        #     reward -= 1
         
-        elif self.same_loc_cnt >= 10:
+        if self.same_loc_cnt >= 10:
             reward -= 50
+        
+        if self.last_img_diff_cnt <= 2:
+            reward -= 10
 
         return reward
 
@@ -247,6 +263,9 @@ class PokemonBrock(PokemonEnvironment):
             return True
         
         if self.same_loc_cnt >= 10:
+            return True
+        
+        if self.same_img_cnt >= 5:
             return True
 
         return False
