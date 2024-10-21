@@ -84,15 +84,19 @@ class PokemonBrock(PokemonEnvironment):
             "ROUTE_1,": 0.21,
             "VIRIDIAN_CITY,": 0.28,
             "VIRIDIAN_POKECENTER,": 0.35,
-            "VIRIDIAN_MART,": 0.42,
             "ROUTE_2,": 0.49,
             "VIRIDIAN_FOREST_SOUTH_GATE,": 0.56,
             "VIRIDIAN_FOREST,": 0.63,
             "VIRIDIAN_FOREST_NORTH_GATE,": 0.7,
             "PEWTER_CITY,": 0.77, 
             "PEWTER_GYM,": 0.83, 
-            "PEWTER_MART,": 0.9, 
         }
+        
+        # 11
+        self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,",]
+
+        self.past_loc = None
+        self.same_loc_cnt = 0
 
     # POSITION
     # {
@@ -109,6 +113,17 @@ class PokemonBrock(PokemonEnvironment):
         # frame = np.array(self.screen.image) #144*160
         # frame:npt.NDArray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # frame.resize((1,144,160))
+
+        # allow loiter if at pokemon center or in battle
+        if game_stats['battle_type'] == 0 and game_stats['location']['map'] != "VIRIDIAN_POKECENTER,": 
+            if self.past_loc == game_stats['location']:
+                self.same_loc_cnt += 1
+            else:
+                self.same_loc_cnt = 0
+        else:
+            self.same_loc_cnt = 0
+
+        self.past_loc = game_stats['location']
 
         frame = np.array(self.screen.image)
         frame = cv2.resize(frame, (self.image_len, self.image_len))
@@ -133,16 +148,23 @@ class PokemonBrock(PokemonEnvironment):
         
         battle_type = self._read_battle_type()
 
+        try:
+            map_index_normalized = self.ALLOWED_MAP.index(game_stats['location']['map'])/10
+        except:
+            print("ENTERED OUT OF BOUND MAP")
+            map_index_normalized = -1
+
         info_vector = [
-            game_stats['location']['x'], 
-            game_stats['location']['y'],
-            game_stats['location']['map_id'],
+            # 1 byte int, normalize by max val
+            game_stats['location']['x']/255, 
+            game_stats['location']['y']/255,
+            map_index_normalized,
             battle_type,
             game_stats["current_pokemon_health"] if battle_type != 0 else 0,
             game_stats["enemy_pokemon_health"] if battle_type != 0 else 0
         ]
 
-        print(info_vector)
+        print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}")
         
         return {
             "image" : frame,
@@ -158,6 +180,9 @@ class PokemonBrock(PokemonEnvironment):
             self.pyboy.load_state(f)
 
         self.prior_game_stats = self._generate_game_stats()
+
+        self.past_loc = None
+        self.same_loc_cnt = 0
 
         # try:
         #     self.image_to_stack.clear()
@@ -183,18 +208,24 @@ class PokemonBrock(PokemonEnvironment):
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
         reward = -1
-        reward += self._levels_reward(new_state)
+        reward += self._levels_reward(new_state) * 1000
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 100
+        reward += self._start_battle_reward(new_state) * 20
         reward += self._xp_increase_reward(new_state) * 10
-        reward += self._enemy_health_decrease_reward(new_state) * 10
-        reward += self._levels_increase_reward(new_state) * 1000
+        reward += self._enemy_health_decrease_reward(new_state) * 15
+        # reward += self._levels_increase_reward(new_state) * 1000
         # reward += self._pokeball_thrown_reward(new_state) * 100
         # reward += self._caught_reward(new_state) * 500
         # reward += self._bought_pokeball_reward(new_state) * 100
 
-        if not new_state["location"]["map"] in ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","VIRIDIAN_MART,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,", "PEWTER_MART,", ]:
-            reward -= 1000
+        if not new_state["location"]["map"] in self.ALLOWED_MAP:
+            reward =  -1000
+
+        if new_state['location']['map'] == "OAKS_LAB,":
+            reward -= 1
+        
+        elif self.same_loc_cnt >= 10:
+            reward -= 50
 
         return reward
 
@@ -204,15 +235,17 @@ class PokemonBrock(PokemonEnvironment):
         return game_stats["badges"] > self.prior_game_stats["badges"]
 
     def _check_if_truncated(self, game_stats: dict) -> bool:
-        is_truncated = False
 
-        if not game_stats["location"]["map"] in ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","VIRIDIAN_MART,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,", "PEWTER_MART,", ]:
-            is_truncated = True
+        if not game_stats["location"]["map"] in self.ALLOWED_MAP:
+            return True
 
         if self.steps >= 1000:
-            is_truncated = True
+            return True
+        
+        if self.same_loc_cnt >= 10:
+            return True
 
-        return is_truncated
+        return False
     
     ################################################################
     ###### EXTEND GATHER DATA ########################################
