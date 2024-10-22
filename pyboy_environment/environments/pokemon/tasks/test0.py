@@ -1,3 +1,8 @@
+# 1 obs
+# 1000 steps
+# no static truncate
+
+
 from functools import cached_property
 
 import numpy as np
