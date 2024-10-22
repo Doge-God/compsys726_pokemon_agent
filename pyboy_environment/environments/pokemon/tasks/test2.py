@@ -1,3 +1,8 @@
+# 3 stack observation, location, battle flag, health, health
+# reset: 70 identical screen / not in battle and stay in place for 70 steps
+# base idle penalty, oak lab penalty
+
+
 from functools import cached_property
 
 import numpy as np
@@ -222,7 +227,7 @@ class PokemonBrock(PokemonEnvironment):
         reward = -1
         reward += self._levels_reward(new_state) * 1000
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 50
+        reward += self._start_battle_reward(new_state) * 20
         reward += self._xp_increase_reward(new_state) * 10
         reward += self._enemy_health_decrease_reward(new_state) * 15
         # reward += self._levels_increase_reward(new_state) * 1000
@@ -233,8 +238,8 @@ class PokemonBrock(PokemonEnvironment):
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
             reward =  -200
 
-        # if new_state['location']['map'] == "OAKS_LAB,":
-        #     reward -= 1
+        if new_state['location']['map'] == "OAKS_LAB,":
+            reward -= 1
         
         # if self.same_loc_cnt >= 10:
         #     reward -= 50

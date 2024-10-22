@@ -114,6 +114,10 @@ class PokemonBrock(PokemonEnvironment):
         # Implement your state retrieval logic here
         game_stats = self._generate_game_stats()
 
+        # frame = np.array(self.screen.image) #144*160
+        # frame:npt.NDArray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # frame.resize((1,144,160))
+
         # allow loiter if at pokemon center or in battle
         if game_stats['battle_type'] == 0 and game_stats['location']['map'] != "VIRIDIAN_POKECENTER,": 
             if self.past_loc == game_stats['location']:
@@ -124,6 +128,7 @@ class PokemonBrock(PokemonEnvironment):
             self.same_loc_cnt = 0
 
         self.past_loc = game_stats['location']
+
         frame = np.array(self.screen.image)
         frame = cv2.resize(frame, (self.image_len, self.image_len))
         # Convert to BGR for use with OpenCV
@@ -143,16 +148,16 @@ class PokemonBrock(PokemonEnvironment):
         # frame = np.moveaxis(frame, -1, 0)
         
         #======  STACK LOGIC  ==============================
-        try:
-            if len(self.image_to_stack) != 3:
-                for _ in range(0,3):
-                    self.image_to_stack.append(frame)
-            else:
-                self.image_to_stack.append(frame)
-        except:
-            pass
+        # try:
+        #     if len(self.image_to_stack) != 3:
+        #         for _ in range(0,3):
+        #             self.image_to_stack.append(frame)
+        #     else:
+        #         self.image_to_stack.append(frame)
+        # except:
+        #     pass
         
-        stacked_frames = np.concatenate(list(self.image_to_stack), axis=0)
+        # stacked_frames = np.concatenate(list(self.image_to_stack), axis=0)
         
         battle_type = self._read_battle_type()
 
@@ -175,7 +180,7 @@ class PokemonBrock(PokemonEnvironment):
         # print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
         
         return {
-            "image" : stacked_frames,
+            "image" : frame,
             "vector": info_vector
         }
     
@@ -196,11 +201,11 @@ class PokemonBrock(PokemonEnvironment):
         self.same_img_cnt = 0
         self.last_img_diff_cnt = 100
 
-        try:
-            self.image_to_stack.clear()
-            self.max_level_sum = 0
-        except:
-            print("No image_to_stack")
+        # try:
+        #     self.image_to_stack.clear()
+        #     self.max_level_sum = 0
+        # except:
+        #     print("No image_to_stack")
 
         return self._get_state()
     
@@ -209,7 +214,7 @@ class PokemonBrock(PokemonEnvironment):
         # return self._get_state().shape()
         # return (144,160)
         return {
-            "image": (3, self.image_len, self.image_len),
+            "image": (1, self.image_len, self.image_len),
             #       coord | battle flag ||| my poke hp, other poke hp
             "vector": 3 +        1+            1+             1                
         }
@@ -222,7 +227,7 @@ class PokemonBrock(PokemonEnvironment):
         reward = -1
         reward += self._levels_reward(new_state) * 1000
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 50
+        reward += self._start_battle_reward(new_state) * 20
         reward += self._xp_increase_reward(new_state) * 10
         reward += self._enemy_health_decrease_reward(new_state) * 15
         # reward += self._levels_increase_reward(new_state) * 1000
@@ -233,14 +238,14 @@ class PokemonBrock(PokemonEnvironment):
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
             reward =  -200
 
-        # if new_state['location']['map'] == "OAKS_LAB,":
-        #     reward -= 1
+        if new_state['location']['map'] == "OAKS_LAB,":
+            reward -= 1
         
-        # if self.same_loc_cnt >= 10:
-        #     reward -= 50
+        if self.same_loc_cnt >= 10:
+            reward -= 50
         
-        # if self.last_img_diff_cnt <= 2:
-        #     reward -= 10
+        if self.last_img_diff_cnt <= 2:
+            reward -= 10
 
         return reward
 
@@ -257,12 +262,10 @@ class PokemonBrock(PokemonEnvironment):
         if self.steps >= 1000:
             return True
         
-        if self.same_loc_cnt >= 70:
-            print("TRUNCATE: SAME NOT MOVING")
+        if self.same_loc_cnt >= 10:
             return True
         
-        if self.same_img_cnt >= 70:
-            print("TRUNCATE: SAME IMAGE")
+        if self.same_img_cnt >= 5:
             return True
 
         return False
