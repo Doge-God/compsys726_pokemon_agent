@@ -1,3 +1,8 @@
+# 3 stack observation, location, battle flag, health, health
+# reset: 70 identical screen / not in battle and stay in place for 70 steps
+# base idle penalty, oak lab penalty
+
+
 from functools import cached_property
 
 import numpy as np
