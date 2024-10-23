@@ -244,8 +244,9 @@ class PokemonBrock(PokemonEnvironment):
         # if new_state['location']['map'] == "OAKS_LAB,":
         #     reward -= 1
             
+            
         if raw_xp_reward == 0:
-            self.no_objective_cnt += 0
+            self.no_objective_cnt += 1
         else:
             self.no_objective_cnt = 0
         

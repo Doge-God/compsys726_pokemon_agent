@@ -251,7 +251,7 @@ class PokemonBrock(PokemonEnvironment):
         #     reward -= 1
             
         if raw_xp_reward == 0:
-            self.no_objective_cnt += 0
+            self.no_objective_cnt += 1
         else:
             self.no_objective_cnt = 0
         
@@ -259,7 +259,7 @@ class PokemonBrock(PokemonEnvironment):
             reward -= 0.5
         
         if self.last_img_diff_cnt <= 3:
-            reward -= 0.2
+            reward -= 0.1
 
         # if new_state["battle_type"] != 0:
         #     reward += 0.25
