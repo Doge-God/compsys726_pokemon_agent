@@ -4,6 +4,12 @@
 # truncate based on 1000 steps no xp
 # add PP
 
+# FAIL
+
+# NO Penalization for same place and  img
+
+
+
 
 from functools import cached_property
 
@@ -270,11 +276,11 @@ class PokemonBrock(PokemonEnvironment):
         else:
             self.no_objective_cnt = 0
         
-        if self.same_loc_cnt >= 10:
-            reward -= 0.5
+        # if self.same_loc_cnt >= 10:
+        #     reward -= 0.5
         
-        if self.last_img_diff_cnt <= 3:
-            reward -= 0.1
+        # if self.last_img_diff_cnt <= 3:
+        #     reward -= 0.1
 
         # if new_state["battle_type"] != 0:
         #     reward += 0.25
