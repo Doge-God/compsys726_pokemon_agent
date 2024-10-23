@@ -13,7 +13,6 @@ import cv2
 import numpy.typing as npt
 from typing import TypedDict, List
 
-
 class GameStats(TypedDict):
     location: any
     battle_type: str
@@ -69,7 +68,7 @@ class PokemonBrock(PokemonEnvironment):
         self.image_len = 84
 
         super().__init__(
-            act_freq=act_freq,
+            act_freq=330, ######################################################################## HERE THIS MF
             task="brock",
             init_name="has_pokedex.state",
             emulation_speed=emulation_speed,
@@ -94,13 +93,18 @@ class PokemonBrock(PokemonEnvironment):
         
         # 11
         self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,",]
+        self.IS_DISCRETE_ACTION = False
 
+        ##################################################################
         self.past_loc = None
         self.same_loc_cnt = 0
 
         self.last_img = np.zeros((self.image_len, self.image_len))
         self.last_img_diff_cnt = 100
         self.same_img_cnt = 0
+
+        self.no_objective_cnt = 0
+        ###################################################################
 
     # POSITION
     # {
@@ -134,7 +138,7 @@ class PokemonBrock(PokemonEnvironment):
         self.last_img_diff_cnt = np.sum(self.last_img != frame)
         self.last_img = frame
 
-        if self.last_img_diff_cnt <= 2:
+        if self.last_img_diff_cnt <= 15:
             self.same_img_cnt += 1
         else:
             self.same_img_cnt = 0
@@ -168,12 +172,10 @@ class PokemonBrock(PokemonEnvironment):
             game_stats['location']['y']/255,
             map_index_normalized,
             battle_type,
-            game_stats["current_pokemon_health"] if battle_type != 0 else 0,
-            game_stats["enemy_pokemon_health"] if battle_type != 0 else 0
         ]
 
         # print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
-        
+
         return {
             "image" : stacked_frames,
             "vector": info_vector
@@ -189,12 +191,16 @@ class PokemonBrock(PokemonEnvironment):
 
         self.prior_game_stats = self._generate_game_stats()
 
+        ##################################################################
         self.past_loc = None
         self.same_loc_cnt = 0
 
         self.last_img = np.zeros((self.image_len, self.image_len))
-        self.same_img_cnt = 0
         self.last_img_diff_cnt = 100
+        self.same_img_cnt = 0
+
+        self.no_objective_cnt = 0
+        ###################################################################
 
         try:
             self.image_to_stack.clear()
@@ -210,8 +216,8 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (3, self.image_len, self.image_len),
-            #       coord | battle flag ||| my poke hp, other poke hp
-            "vector": 3 +        1+            1+             1                
+            #       coord | battle flag |
+            "vector": 3 +        1                   
         }
     
     #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
@@ -219,12 +225,14 @@ class PokemonBrock(PokemonEnvironment):
 
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
+        raw_xp_reward = self._xp_increase_reward(new_state)
+
         reward = -1
-        reward += self._levels_reward(new_state) * 1000
+        reward += self._levels_reward(new_state) * 500
         reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 50
-        reward += self._xp_increase_reward(new_state) * 10
-        reward += self._enemy_health_decrease_reward(new_state) * 15
+        reward += self._start_battle_reward(new_state) * 10 # normal battle
+        reward += raw_xp_reward * 15
+        reward += self._enemy_health_decrease_reward(new_state) * 10
         # reward += self._levels_increase_reward(new_state) * 1000
         # reward += self._pokeball_thrown_reward(new_state) * 100
         # reward += self._caught_reward(new_state) * 500
@@ -235,12 +243,20 @@ class PokemonBrock(PokemonEnvironment):
 
         # if new_state['location']['map'] == "OAKS_LAB,":
         #     reward -= 1
+            
+        if raw_xp_reward == 0:
+            self.no_objective_cnt += 0
+        else:
+            self.no_objective_cnt = 0
         
-        # if self.same_loc_cnt >= 10:
-        #     reward -= 50
+        if self.same_loc_cnt >= 10:
+            reward -= 0.5
         
-        # if self.last_img_diff_cnt <= 2:
-        #     reward -= 10
+        if self.last_img_diff_cnt <= 3:
+            reward -= 0.2
+
+        # if new_state["battle_type"] != 0:
+        #     reward += 0.25
 
         return reward
 
@@ -254,7 +270,11 @@ class PokemonBrock(PokemonEnvironment):
         if not game_stats["location"]["map"] in self.ALLOWED_MAP:
             return True
 
-        if self.steps >= 8000:
+        # if self.steps >= 8000:
+        #     return True
+
+        if self.no_objective_cnt >= 1000:
+            print("TRUNCATE: NO OBJECTIVE")
             return True
         
         if self.same_loc_cnt >= 70:
@@ -267,6 +287,35 @@ class PokemonBrock(PokemonEnvironment):
 
         return False
     
+    ################################################################
+    ###### OVERRIDE ACTION ########################################
+    
+    def _run_action_on_emulator(self, action_array: np.ndarray) -> None:
+
+        if self.IS_DISCRETE_ACTION:
+            button = action_array[0]
+
+            # Push the button for ONE frame and release
+            self.pyboy.send_input(self.valid_actions[button])
+            self.pyboy.tick(9,render=False)
+            self.pyboy.send_input(self.release_button[button])
+            self.pyboy.tick(self.act_freq+1, render=True) # ONLY render last frame
+            
+        else:
+            action = action_array[0]
+            action = min(action, 0.99)
+
+            # Continuous Action is a float between 0 - 1 from Value based methods
+            # We need to convert this to an action that the emulator can understand
+            bins = np.linspace(0, 1, len(self.valid_actions) + 1)
+            button = np.digitize(action, bins) - 1
+
+            # Push the button for ONE frame and release
+            self.pyboy.send_input(self.valid_actions[button])
+            self.pyboy.tick(9,render=False)
+            self.pyboy.send_input(self.release_button[button])
+            self.pyboy.tick(self.act_freq+1, render=True) # ONLY render last frame
+
     ################################################################
     ###### EXTEND GATHER DATA ########################################
 
