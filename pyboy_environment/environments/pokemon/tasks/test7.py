@@ -25,6 +25,7 @@ import cv2
 import numpy.typing as npt
 from typing import TypedDict, List
 
+
 class GameStats(TypedDict):
     location: any
     battle_type: str
@@ -46,6 +47,9 @@ class GameStats(TypedDict):
     money: int
     events: List[str]  # Assuming events are strings, adjust if needed
     items: List[str]   # Assuming items are strings, adjust if needed
+    current_pp: List[int]
+    menu_type: int
+    menu_item: int
 
 class PokemonBrock(PokemonEnvironment):
     def __init__(
@@ -275,11 +279,11 @@ class PokemonBrock(PokemonEnvironment):
         else:
             self.no_objective_cnt = 0
         
-        if self.same_loc_cnt >= 10:
-            reward -= 0.5
+        # if self.same_loc_cnt >= 10:
+        #     reward -= 0.5
         
-        if self.last_img_diff_cnt <= 3:
-            reward -= 0.1
+        # if self.last_img_diff_cnt <= 3:
+        #     reward -= 0.1
 
         # if new_state["battle_type"] != 0:
         #     reward += 0.25
@@ -404,6 +408,17 @@ class PokemonBrock(PokemonEnvironment):
     def _read_battle_type(self) -> int:
         return self._read_m(0xD057)
     
+    def _read_current_pp(self):
+        return [
+            self._read_m(addr) for addr in [0xD02D, 0xD02E, 0xD02F, 0xD030]
+        ]
+    
+    def _read_menu_type(self):
+        return self._read_m(0xCC29)
+    
+    def _read_current_menu_item(self):
+        return self._read_m(0xCC26)
+    
     def _generate_game_stats(self) -> GameStats:
         # debug-log logging.info("Logging124")
         stats:GameStats = {
@@ -427,6 +442,9 @@ class PokemonBrock(PokemonEnvironment):
             "money": self._read_money(),
             "events": self._read_events(),
             "items": self._read_items_(),
+            "current_pp": self._read_current_pp(),
+            "menu_type": self._read_menu_type(),
+            "menu_item": self._read_current_menu_item()
         }
         return stats
     
