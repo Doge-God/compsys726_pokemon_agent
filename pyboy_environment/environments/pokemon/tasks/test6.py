@@ -5,6 +5,10 @@
 
 #!!!!!!!!!! 770,000 major success -> lv17 evolved squirtle
 
+# inject manual experience 2 experiences, 10k steps no progress
+
+
+
 from functools import cached_property
 
 import numpy as np
@@ -19,6 +23,7 @@ import collections
 import cv2
 import numpy.typing as npt
 from typing import TypedDict, List
+
 
 class GameStats(TypedDict):
     location: any
@@ -41,6 +46,9 @@ class GameStats(TypedDict):
     money: int
     events: List[str]  # Assuming events are strings, adjust if needed
     items: List[str]   # Assuming items are strings, adjust if needed
+    current_pp: List[int]
+    menu_type: int
+    menu_item: int
 
 class PokemonBrock(PokemonEnvironment):
     def __init__(
@@ -74,6 +82,11 @@ class PokemonBrock(PokemonEnvironment):
         self.max_level_sum = 0
         self.image_len = 84
 
+         # 11
+        self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,",]
+        self.IS_DISCRETE_ACTION = False
+        self.IS_PRINTING = False
+
         super().__init__(
             act_freq=330, ######################################################################## HERE THIS MF
             task="brock",
@@ -98,9 +111,6 @@ class PokemonBrock(PokemonEnvironment):
             "PEWTER_GYM,": 0.83, 
         }
         
-        # 11
-        self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,","ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,",]
-        self.IS_DISCRETE_ACTION = False
 
         ##################################################################
         self.past_loc = None
@@ -173,15 +183,26 @@ class PokemonBrock(PokemonEnvironment):
             print("ENTERED OUT OF BOUND MAP")
             map_index_normalized = -1
 
+        selected_move_pp = 0
+        if game_stats['battle_type'] != 0 and game_stats['menu_type'] == 199:
+            selected_move_pp = game_stats['current_pp'][game_stats['menu_item']-1]
+        # print(selected_move_pp)
+
         info_vector = [
             # 1 byte int, normalize by max val
-            game_stats['location']['x']/255, 
-            game_stats['location']['y']/255,
-            map_index_normalized,
+            game_stats['location']['x']/255 if battle_type == 0 else 0, 
+            game_stats['location']['y']/255 if battle_type == 0 else 0,
+            map_index_normalized if battle_type == 0 else 0,
             battle_type,
         ]
 
-        # print(f"({round(game_stats['location']['x']/255,2)}, {round(game_stats['location']['y']/255,2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, {self.last_img_diff_cnt}")
+        if self.IS_PRINTING:
+            print(f"LOC: {round(game_stats['location']['x']/255,4)}, {round(game_stats['location']['y']/255,4)}, {round(map_index_normalized,2)}")
+            print(f"BATTLE: {battle_type}, IMG DIFF: {self.last_img_diff_cnt}")
+            print(f"PP: {self._read_current_pp()}")
+            print(f"selected menu item {self._read_m(0xCC26)}")
+            print(f"Bitmask current menu? {self._read_m(0xCC29)}")
+            print("--------------------------------------------------------")
 
         return {
             "image" : stacked_frames,
@@ -223,8 +244,8 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (3, self.image_len, self.image_len),
-            #       coord | battle flag |
-            "vector": 3 +        1                   
+            #       coord | battle flag
+            "vector": 3 +        1         
         }
     
     #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
@@ -367,6 +388,17 @@ class PokemonBrock(PokemonEnvironment):
     def _read_battle_type(self) -> int:
         return self._read_m(0xD057)
     
+    def _read_current_pp(self):
+        return [
+            self._read_m(addr) for addr in [0xD02D, 0xD02E, 0xD02F, 0xD030]
+        ]
+    
+    def _read_menu_type(self):
+        return self._read_m(0xCC29)
+    
+    def _read_current_menu_item(self):
+        return self._read_m(0xCC26)
+    
     def _generate_game_stats(self) -> GameStats:
         # debug-log logging.info("Logging124")
         stats:GameStats = {
@@ -390,6 +422,9 @@ class PokemonBrock(PokemonEnvironment):
             "money": self._read_money(),
             "events": self._read_events(),
             "items": self._read_items_(),
+            "current_pp": self._read_current_pp(),
+            "menu_type": self._read_menu_type(),
+            "menu_item": self._read_current_menu_item()
         }
         return stats
     
@@ -461,4 +496,9 @@ class PokemonBrock(PokemonEnvironment):
             if (old_levels[i] != 0):
                 reward += (new_levels[i] / old_levels[i] - 1)
         return reward
+    
+    def _map_progress_reward(self, new_state):
+        if new_state["location"]["map"] == "OAKS_LAB,":
+            pass
+    
 

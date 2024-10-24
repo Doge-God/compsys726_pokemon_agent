@@ -3,6 +3,7 @@
 # slight penalty for same screen
 # truncate based on 1000 steps no xp
 
+#!!!!!!!!!! 770,000 major success -> lv17 evolved squirtle
 
 from functools import cached_property
 
