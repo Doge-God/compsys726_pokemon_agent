@@ -219,7 +219,7 @@ class PokemonBrock(PokemonEnvironment):
             y,
             idx, 
             fight_flag,
-            1 if selected_move_pp > 0 else 0, # indicator for whether selected move has pp, only active when on that menu
+            1 if selected_move_pp/35 > 0 else 0, # indicator for whether selected move has pp, only active when on that menu
             game_stats["should_fight"] if battle_type != 0 else 0 # should fight flag
         ]
 
