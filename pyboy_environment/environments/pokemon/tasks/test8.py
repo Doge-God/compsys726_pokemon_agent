@@ -5,7 +5,12 @@
 
 # better map normalization
 # map direction reward
-# penalize run away -5
+# penalize run away
+
+# pp
+
+# reward for reset
+# directives
 
 
 
@@ -24,7 +29,6 @@ import collections
 import cv2
 import numpy.typing as npt
 from typing import TypedDict, List
-
 
 class GameStats(TypedDict):
     location: any
@@ -47,9 +51,7 @@ class GameStats(TypedDict):
     money: int
     events: List[str]  # Assuming events are strings, adjust if needed
     items: List[str]   # Assuming items are strings, adjust if needed
-    current_pp: List[int]
-    menu_type: int
-    menu_item: int
+    
 
 class PokemonBrock(PokemonEnvironment):
     def __init__(
@@ -107,12 +109,13 @@ class PokemonBrock(PokemonEnvironment):
             "PEWTER_GYM,": 0.83, 
         }
         
-        # 5
+        # 5 # 11
         #"ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,",
-        self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,"]
+        self.ALLOWED_MAP = ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,", "ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,","PEWTER_CITY,", "PEWTER_GYM,"]
         self.IS_DISCRETE_ACTION = False
 
         ##################################################################
+
         self.past_loc = None
         self.same_loc_cnt = 0
 
@@ -120,7 +123,8 @@ class PokemonBrock(PokemonEnvironment):
         self.last_img_diff_cnt = 100
         self.same_img_cnt = 0
 
-        self.no_objective_cnt = 0
+        self.truncate_cnt = 1000
+
         ###################################################################
 
     # POSITION
@@ -190,19 +194,41 @@ class PokemonBrock(PokemonEnvironment):
 
         x,y,idx = self.process_loc(game_stats)
 
+        # fight_flag = 0 
+        # if self.directive == 0: # level up directive, always fight
+        #     fight_flag = 1
+        # else: # on the way to brock
+        #     if battle_type == 2:
+        #         fight_flag = 1 # only fight gym battles
+        #     else:
+        #         fight_flag = 0 # run from wild fights
+
+        if battle_type == 0:
+            fight_flag = 0
+        else:
+            fight_flag = 1
+
+        
+        
+            
         info_vector = [
             # 1 byte int, normalize by max val
+            game_stats['directive'] if battle_type == 0 else 0,
             x,
             y,
-            idx,
-            battle_type
+            idx, 
+            fight_flag,
+            1 if selected_move_pp > 0 else 0, # indicator for whether selected move has pp, only active when on that menu
+            game_stats["should_fight"] if battle_type != 0 else 0 # should fight flag
         ]
 
-        # print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
-        # print(self._read_current_pp())
-        # print(f"selected menu item {self._read_m(0xCC26)}")
-        # print(f"Bitmask current menu? {self._read_m(0xCC29)}")
-        # print("-----------------------------------------------------------")
+        print("-----------------------------------------------------------")
+        print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
+        print(f"Selected move PP: {selected_move_pp if fight_flag != 0 else 0}")
+        print(game_stats['location']['map'])
+        print(f"selected menu item {self._read_m(0xCC26)}")
+        print(f"Bitmask current menu? {self._read_m(0xCC29)}")
+        
 
         return {
             "image" : stacked_frames,
@@ -227,7 +253,8 @@ class PokemonBrock(PokemonEnvironment):
         self.last_img_diff_cnt = 100
         self.same_img_cnt = 0
 
-        self.no_objective_cnt = 0
+        self.truncate_cnt = 1000
+
         ###################################################################
 
         try:
@@ -244,8 +271,8 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (3, self.image_len, self.image_len),
-            #       coord | battle flag 
-            "vector": 3 +        1    
+            #       directive | coord | in battle | should fight | pp  | 
+            "vector": 1+         3 +        1+          1  +        1     
         }
     
     #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
@@ -254,42 +281,81 @@ class PokemonBrock(PokemonEnvironment):
     def _calculate_reward(self, new_state: dict) -> float:
         # Implement your reward calculation logic here
         raw_xp_reward = self._xp_increase_reward(new_state)
+        raw_heal_reward = self._heal_reward(new_state)
+        directive = self.prior_game_stats["directive"] 
+        raw_map_prog_reward = self.map_progress_reward(new_state)
+        
 
         reward = -1
-        reward += self._levels_reward(new_state) * 500
-        reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 10 # normal battle
-        reward += raw_xp_reward * 15
-        reward += self._enemy_health_decrease_reward(new_state) * 10
-        reward += self._map_directional_reward(new_state) * 0.2
-        reward -= self._run_away_reward(new_state) * 10
-        # reward += self._levels_increase_reward(new_state) * 1000
-        # reward += self._pokeball_thrown_reward(new_state) * 100
-        # reward += self._caught_reward(new_state) * 500
-        # reward += self._bought_pokeball_reward(new_state) * 100
+        
+        # NAV REWARD FOR STARTING WILD FIGHTS
+        if directive == 0: # fight to level up
+            reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
+            reward += self._start_battle_reward(new_state) * 10 # normal battle
+        
+        # DIRECTIVE UPDATED
+        elif directive == 0 and new_state["directive"] == 1:
+            reward += 500
+
+        # NAV REWARD FOR TRYING TO FIGHT BROCK
+        else:
+            reward += raw_map_prog_reward * 5000
+            reward += self._start_battle_reward(new_state,2) * 5000
+
+
+        print(f"PASS TURN: {self._pass_turn_reward(new_state)}")
+        print(f"Healed: {raw_heal_reward}")
+        print(f"Truncate cnt: {self.truncate_cnt}")
+
+        # BATTLE REWARD
+        if self.prior_game_stats['should_fight'] == 1: # should fight
+            reward += raw_xp_reward * 15
+            reward -= self._run_away_reward(new_state) * 10
+            reward += raw_heal_reward * 500
+            reward += self._levels_reward(new_state) * 500
+            reward += self._enemy_health_decrease_reward(new_state) * 10
+            reward += self._pass_turn_reward(new_state) * 10
+        else: # shouldnt fight, only reward for running
+            reward -= 1
+            reward += self._run_away_reward(new_state) * 10
+
+        
+        #### TRUNCATE COUNTER MANAGEMENT
+        if raw_heal_reward != 0: # extend truncation if healed
+            self.truncate_cnt += 1000
+
+        # reset truncate count if xp gained
+        if directive == 0:
+            if raw_xp_reward == 0:
+                self.truncate_cnt -= 1
+            else:
+                self.truncate_cnt = 1000
+
+        if directive == 1:
+            if raw_map_prog_reward == 0:
+                self.truncate_cnt -= 1
+            else:
+                self.truncate_cnt = 1500
+            
+            if self._start_battle_reward(new_state,2) != 0: #started trainer battle
+                self.truncate_cnt = 1000
+            else:
+                self.truncate_cnt -= 1
+
+
+        # GENERAL
+        reward += self.map_gradual_progress_reward(new_state) * 0.2
 
         if not new_state["location"]["map"] in self.ALLOWED_MAP:
-            reward =  -200
-
-        # if new_state['location']['map'] == "OAKS_LAB,":
-        #     reward -= 1
-            
-        if raw_xp_reward == 0:
-            self.no_objective_cnt += 1
-        else:
-            self.no_objective_cnt = 0
+            reward =  -50
         
-        # if self.same_loc_cnt >= 10:
-        #     reward -= 0.5
+        if self.same_loc_cnt >= 10:
+            reward -= 0.5
         
-        # if self.last_img_diff_cnt <= 3:
-        #     reward -= 0.1
+        if self.last_img_diff_cnt <= 3:
+            reward -= 0.1
 
-        # if new_state["battle_type"] != 0:
-        #     reward += 0.25
-
-        # print(f"MAP REWARD: {self._map_directional_reward(new_state)}")
-        # print(f"RUN REWARD: {self._run_away_reward(new_state)}")
+        # print(f"map_gradual {self.map_gradual_progress_reward(new_state)}")
 
         return reward
 
@@ -303,10 +369,11 @@ class PokemonBrock(PokemonEnvironment):
         if not game_stats["location"]["map"] in self.ALLOWED_MAP:
             return True
 
-        # if self.steps >= 8000:
-        #     return True
+        if self.steps >= 10000:
+            print("TRUNCATE: MAX STEP")
+            return True
 
-        if self.no_objective_cnt >= 1000:
+        if self.truncate_cnt <= 0:
             print("TRUNCATE: NO OBJECTIVE")
             return True
         
@@ -353,7 +420,7 @@ class PokemonBrock(PokemonEnvironment):
     ###### EXTEND GATHER DATA ########################################
 
     def process_loc(self, game_stats):
-        '''return x,y,idx, all normalized'''
+        '''return x,y,idx, all normalized. 0 if in battle'''
         battle_type = game_stats['battle_type']
         x = game_stats['location']['x']/35 if battle_type == 0 else 0
         y = game_stats['location']['y']/35 if battle_type == 0 else 0
@@ -366,6 +433,24 @@ class PokemonBrock(PokemonEnvironment):
         idx = map_index_normalized if battle_type == 0 else 0
         
         return x,y,idx
+    
+    def calc_dist_closed(self, game_stats, goal_x, goal_y):
+        x = game_stats['location']['x']
+        y = game_stats['location']['y']
+
+        old_x = self.prior_game_stats['location']['x']
+        old_y = self.prior_game_stats['location']['y']
+
+        x_prog = abs(goal_x-x) - abs(goal_x-old_x)
+        y_prog = abs(goal_y-y) - abs(goal_y-old_y)
+
+        tot_manh_prog = x_prog+y_prog
+
+        if tot_manh_prog < 0:
+            return 1
+        else:
+            return 0 
+
 
     def _get_pokeball_count(self, items) -> int:
         total_count = 0
@@ -393,6 +478,11 @@ class PokemonBrock(PokemonEnvironment):
 
         return items
     
+    def _read_current_pp(self):
+        return [
+            self._read_m(addr) for addr in [0xD02D, 0xD02E, 0xD02F, 0xD030]
+        ]
+    
     def _get_enemy_catch_rate(self) -> int:
         return self._read_m(0xD007)
 
@@ -408,16 +498,37 @@ class PokemonBrock(PokemonEnvironment):
     def _read_battle_type(self) -> int:
         return self._read_m(0xD057)
     
-    def _read_current_pp(self):
-        return [
-            self._read_m(addr) for addr in [0xD02D, 0xD02E, 0xD02F, 0xD030]
-        ]
-    
     def _read_menu_type(self):
         return self._read_m(0xCC29)
     
     def _read_current_menu_item(self):
         return self._read_m(0xCC26)
+    
+    def _read_turn(self):
+        '''From 0 to 1 is passing turn'''
+        return self._read_m(0xFFF3)
+    
+    def calc_should_fight(self): 
+        '''should fight or not, only active in battle'''
+        should_fight = 0
+        directive = self.calc_directive()
+        if self.prior_game_stats["battle_type"] != 0: # in battle
+            if directive == 0: # training, always fight
+                should_fight = 1
+            else: # trying to fight brock
+                if self.prior_game_stats["battle_type"] == 1:
+                    should_fight = 0
+                else:
+                    should_fight = 1
+
+        return should_fight
+    
+    def calc_directive(self):
+        '''level 16'''
+        if sum(self._read_party_level()) <= 16:
+            return 0
+        else:
+            return 1
     
     def _generate_game_stats(self) -> GameStats:
         # debug-log logging.info("Logging124")
@@ -444,13 +555,90 @@ class PokemonBrock(PokemonEnvironment):
             "items": self._read_items_(),
             "current_pp": self._read_current_pp(),
             "menu_type": self._read_menu_type(),
-            "menu_item": self._read_current_menu_item()
+            "menu_item": self._read_current_menu_item(),
+            "turn_flag": self._read_turn(),
+            "should_fight:": self.calc_should_fight(),
+            "directive": self.calc_directive()
         }
         return stats
     
 
     #######################################################################
     ################ EXTEND REWARD ##########################################
+    def map_progress_reward(self,new_state):
+        old_state = self.prior_game_stats
+        try:
+            new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
+            old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
+        except:
+            return 0
+        
+
+        if new_map_idx > old_map_idx or (new_state['location']['map']=="ROUTE_2," and old_state['location']['map']=="VIRIDIAN_FOREST_NORTH_GATE,"):
+            return 1
+        # backed up
+        elif old_map_idx > new_map_idx and old_state["battle_type"] == 0:
+            return -1
+
+
+    def map_gradual_progress_reward(self, new_state):
+        # ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,", 
+        #"ROUTE_2,","VIRIDIAN_FOREST_SOUTH_GATE,","VIRIDIAN_FOREST,","VIRIDIAN_FOREST_NORTH_GATE,",
+        #"PEWTER_CITY,", "PEWTER_GYM,"]
+        old_state = self.prior_game_stats
+
+        try:
+            new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
+            old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
+        except:
+            return 0
+        
+        
+        # progressed in map
+        if new_map_idx > old_map_idx or (new_state['location']['map']=="ROUTE_2," and old_state['location']['map']=="VIRIDIAN_FOREST_NORTH_GATE,"):
+            return 0
+        # backed up
+        elif old_map_idx > new_map_idx and old_state["battle_type"] == 0:
+            return 0
+
+        # oak
+        if new_state['location']['map'] == "OAKS_LAB,":
+            if new_state['location']['y'] > old_state['location']['y']:
+                return 1
+            else:
+                return 0
+        # pallet
+        if new_state['location']['map'] == "PALLET_TOWN,":
+            return self.calc_dist_closed(new_state,11,0)
+        
+        # route 1 or route 2 just move up
+        if new_state['location']['map'] == "ROUTE_1," or  new_state['location']['map'] == "ROUTE_2,":
+            if new_state['location']['y'] < old_state['location']['y']:
+                return 1
+            else:
+                return 0
+        # viridian
+        if new_state['location']['map'] == "VIRIDIAN_CITY,":
+            return self.calc_dist_closed(new_state,17,0)
+        
+        # gates
+        if new_state['location']['map'] == "VIRIDIAN_FOREST_SOUTH_GATE," or new_state['location']['map']=="VIRIDIAN_FOREST_NORTH_GATE,":
+            return self.calc_dist_closed(new_state,5,1)
+
+        # forest
+        if new_state['location']['map'] == "VIRIDIAN_FOREST,":
+            return self.calc_dist_closed(new_state,1,0)
+
+        # pewt
+        if new_state['location']['map'] == "PEWTER_CITY,":
+            return self.calc_dist_closed(new_state,16,18)
+        
+        # gym
+        if new_state['location']['map'] == "PEWTER_GYM,":
+            return self.calc_dist_closed(new_state,4,1)
+
+        return 0
+
 
     def _pokeball_thrown_reward(self, new_state) -> int:
         previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
@@ -461,6 +649,14 @@ class PokemonBrock(PokemonEnvironment):
             return 1
         else:
             return 0
+    
+    def _heal_reward(self, new_state):
+        # sum(new_state['hp']['current']) > sum(self.prior_game_stats["hp"]['current'])
+        if sum(new_state['hp']['current']) > sum(self.prior_game_stats["hp"]['current']) and sum(self.prior_game_stats["hp"]['current']) == 0:
+            return 1
+        else:
+            return 0
+
 
     def _bought_pokeball_reward(self, new_state) -> int:
         previous_count = self._get_pokeball_count(self.prior_game_stats["items"])
@@ -507,49 +703,19 @@ class PokemonBrock(PokemonEnvironment):
     def _xp_increase_reward(self, new_state: dict[str, any]) -> int:
         return sum(new_state["xp"]) - sum(self.prior_game_stats["xp"])
     
-    def _map_directional_reward(self, new_state, directive = 0):
-        # ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,"]
-        old_state = self.prior_game_stats
-
-        try:
-            new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
-        except:
-            return 0
-        
-        old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
-        
-        # progressed in map
-        if new_map_idx > old_map_idx:
-            return 1
-        # backed up
-        elif old_map_idx > new_map_idx:
-            return 0
-
-        # oak
-        if new_state['location']['map'] == "OAKS_LAB,":
-            if new_state['location']['y'] > old_state['location']['y']:
-                return 1
-            else:
-                return 0
-
-        if new_state['location']['map'] == "PALLET_TOWN,":
-            if new_state['location']['y'] < old_state['location']['y']:
-                return 1
-            else:
-                return 0
-
-        # route 1
-        if new_state['location']['map'] == "ROUTE_1,":
-            if new_state['location']['y'] < old_state['location']['y']:
-                return 1
-            else:
-                return 0
     
     def _run_away_reward(self,new_state):
+        '''1 for the new stat as a result of running'''
         if new_state["battle_type"] == 0 and self.prior_game_stats['battle_type'] != 0 and self.prior_game_stats['menu_type'] == 33 and self.prior_game_stats["menu_item"] == 3:
             return 1
         else:
             return 0 
+        
+    def _pass_turn_reward(self,new_state):
+        if new_state['turn_flag'] == 1 and self.prior_game_stats['turn_flag'] == 0:
+            return 1
+        else:
+            return 0
 
 
     def _levels_increase_reward(self, new_state: dict[str, any]) -> int:
