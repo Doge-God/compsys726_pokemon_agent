@@ -580,6 +580,9 @@ class PokemonBrock(PokemonEnvironment):
         # backed up
         elif old_map_idx > new_map_idx and old_state["battle_type"] == 0:
             return -1
+        
+        else:
+            return 0
 
 
     def map_gradual_progress_reward(self, new_state):
