@@ -300,7 +300,7 @@ class PokemonBrock(PokemonEnvironment):
         # BATTLE REWARD
         # if self.prior_game_stats['should_fight'] == 1: # should fight
         reward += raw_xp_reward * 15
-        reward -= self._run_away_reward(new_state) * 10
+        reward -= self._run_away_reward(new_state) * 15
         reward += raw_heal_reward * 500
         reward += self._levels_reward(new_state) * 500
         reward += self._enemy_health_decrease_reward(new_state) * 10
