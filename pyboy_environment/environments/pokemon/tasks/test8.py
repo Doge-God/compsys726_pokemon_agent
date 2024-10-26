@@ -10,8 +10,6 @@
 # pp
 
 # reward for reset
-# directives
-
 
 
 
@@ -125,6 +123,8 @@ class PokemonBrock(PokemonEnvironment):
 
         self.truncate_cnt = 1000
 
+        self.directive = 0 #0=fight 1=brock 
+
         ###################################################################
 
     # POSITION
@@ -207,28 +207,22 @@ class PokemonBrock(PokemonEnvironment):
             fight_flag = 0
         else:
             fight_flag = 1
-
-        
-        
             
         info_vector = [
             # 1 byte int, normalize by max val
-            game_stats['directive'] if battle_type == 0 else 0,
             x,
             y,
             idx, 
             fight_flag,
             1 if selected_move_pp > 0 else 0, # indicator for whether selected move has pp, only active when on that menu
-            game_stats["should_fight"] if battle_type != 0 else 0 # should fight flag
         ]
 
-        print("-----------------------------------------------------------")
-        print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
-        print(f"Selected move PP: {selected_move_pp if fight_flag != 0 else 0}")
-        print(game_stats['location']['map'])
-        print(f"selected menu item {self._read_m(0xCC26)}")
-        print(f"Bitmask current menu? {self._read_m(0xCC29)}")
-        
+        # print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
+        # print(f"Selected move PP: {selected_move_pp if fight_flag != 0 else 0}")
+        # print(game_stats['location']['map'])
+        # print(f"selected menu item {self._read_m(0xCC26)}")
+        # print(f"Bitmask current menu? {self._read_m(0xCC29)}")
+        # print("-----------------------------------------------------------")
 
         return {
             "image" : stacked_frames,
@@ -255,6 +249,7 @@ class PokemonBrock(PokemonEnvironment):
 
         self.truncate_cnt = 1000
 
+        self.directive = 0
         ###################################################################
 
         try:
@@ -271,8 +266,8 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (3, self.image_len, self.image_len),
-            #       directive | coord | in battle | should fight | pp  | 
-            "vector": 1+         3 +        1+          1  +        1     
+            #       coord | battle flag | pp  | 
+            "vector": 3 +        1+        1     
         }
     
     #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
@@ -282,66 +277,37 @@ class PokemonBrock(PokemonEnvironment):
         # Implement your reward calculation logic here
         raw_xp_reward = self._xp_increase_reward(new_state)
         raw_heal_reward = self._heal_reward(new_state)
-        directive = self.prior_game_stats["directive"] 
-        raw_map_prog_reward = self.map_progress_reward(new_state)
-        
 
         reward = -1
         
-        # NAV REWARD FOR STARTING WILD FIGHTS
-        if directive == 0: # fight to level up
-            reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-            reward += self._start_battle_reward(new_state) * 10 # normal battle
-        
-        # DIRECTIVE UPDATED
-        elif directive == 0 and new_state["directive"] == 1:
-            reward += 500
+        # FIGHT ONLY
+        # if self.directive == 0: # fight to level up
+        reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
+        reward += self._start_battle_reward(new_state) * 10 # normal battle
+        reward += raw_xp_reward * 15
+        reward -= self._run_away_reward(new_state) * 10
+        reward += raw_heal_reward * 500
+        reward += self._levels_reward(new_state) * 500
+        reward += self._enemy_health_decrease_reward(new_state) * 10
+        reward += self._pass_turn_reward(new_state) * 10
 
-        # NAV REWARD FOR TRYING TO FIGHT BROCK
-        else:
-            reward += raw_map_prog_reward * 5000
-            reward += self._start_battle_reward(new_state,2) * 5000
+        # print(f"PASS TURN: {self._pass_turn_reward(new_state)}")
+        # print(f"Healed: {raw_heal_reward}")
+        # print(f"Truncate cnt: {self.truncate_cnt}")
 
-
-        print(f"PASS TURN: {self._pass_turn_reward(new_state)}")
-        print(f"Healed: {raw_heal_reward}")
-        print(f"Truncate cnt: {self.truncate_cnt}")
-
-        # BATTLE REWARD
-        if self.prior_game_stats['should_fight'] == 1: # should fight
-            reward += raw_xp_reward * 15
-            reward -= self._run_away_reward(new_state) * 10
-            reward += raw_heal_reward * 500
-            reward += self._levels_reward(new_state) * 500
-            reward += self._enemy_health_decrease_reward(new_state) * 10
-            reward += self._pass_turn_reward(new_state) * 10
-        else: # shouldnt fight, only reward for running
-            reward -= 1
-            reward += self._run_away_reward(new_state) * 10
-
-        
-        #### TRUNCATE COUNTER MANAGEMENT
         if raw_heal_reward != 0: # extend truncation if healed
             self.truncate_cnt += 1000
 
         # reset truncate count if xp gained
-        if directive == 0:
-            if raw_xp_reward == 0:
-                self.truncate_cnt -= 1
-            else:
-                self.truncate_cnt = 1000
-
-        if directive == 1:
-            if raw_map_prog_reward == 0:
-                self.truncate_cnt -= 1
-            else:
-                self.truncate_cnt = 1500
-            
-            if self._start_battle_reward(new_state,2) != 0: #started trainer battle
-                self.truncate_cnt = 1000
-            else:
-                self.truncate_cnt -= 1
-
+        if raw_xp_reward == 0:
+            self.truncate_cnt -= 1
+        else:
+            self.truncate_cnt = 1000
+        
+        # BROCK ONLY
+        # else: # go fight brock
+        #     reward += raw_heal_reward * 100
+        #     reward += self._start_battle_reward(new_state,2) * 1000 # npc battle
 
         # GENERAL
         reward += self.map_gradual_progress_reward(new_state) * 0.2
@@ -508,28 +474,6 @@ class PokemonBrock(PokemonEnvironment):
         '''From 0 to 1 is passing turn'''
         return self._read_m(0xFFF3)
     
-    def calc_should_fight(self): 
-        '''should fight or not, only active in battle'''
-        should_fight = 0
-        directive = self.calc_directive()
-        if self.prior_game_stats["battle_type"] != 0: # in battle
-            if directive == 0: # training, always fight
-                should_fight = 1
-            else: # trying to fight brock
-                if self.prior_game_stats["battle_type"] == 1:
-                    should_fight = 0
-                else:
-                    should_fight = 1
-
-        return should_fight
-    
-    def calc_directive(self):
-        '''level 16'''
-        if sum(self._read_party_level()) <= 16:
-            return 0
-        else:
-            return 1
-    
     def _generate_game_stats(self) -> GameStats:
         # debug-log logging.info("Logging124")
         stats:GameStats = {
@@ -557,8 +501,6 @@ class PokemonBrock(PokemonEnvironment):
             "menu_type": self._read_menu_type(),
             "menu_item": self._read_current_menu_item(),
             "turn_flag": self._read_turn(),
-            "should_fight:": self.calc_should_fight(),
-            "directive": self.calc_directive()
         }
         return stats
     
@@ -569,10 +511,9 @@ class PokemonBrock(PokemonEnvironment):
         old_state = self.prior_game_stats
         try:
             new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
-            old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
         except:
             return 0
-        
+        old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
 
         if new_map_idx > old_map_idx or (new_state['location']['map']=="ROUTE_2," and old_state['location']['map']=="VIRIDIAN_FOREST_NORTH_GATE,"):
             return 1
@@ -589,10 +530,9 @@ class PokemonBrock(PokemonEnvironment):
 
         try:
             new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
-            old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
         except:
             return 0
-        
+        old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
         
         # progressed in map
         if new_map_idx > old_map_idx or (new_state['location']['map']=="ROUTE_2," and old_state['location']['map']=="VIRIDIAN_FOREST_NORTH_GATE,"):
@@ -703,9 +643,47 @@ class PokemonBrock(PokemonEnvironment):
     def _xp_increase_reward(self, new_state: dict[str, any]) -> int:
         return sum(new_state["xp"]) - sum(self.prior_game_stats["xp"])
     
+    def _map_directional_reward(self, new_state, directive = 0):
+        # ["OAKS_LAB,","PALLET_TOWN,", "ROUTE_1,","VIRIDIAN_CITY,","VIRIDIAN_POKECENTER,"]
+        old_state = self.prior_game_stats
+
+        try:
+            new_map_idx = self.ALLOWED_MAP.index(new_state['location']['map'])
+        except:
+            return 0
+        
+        old_map_idx = self.ALLOWED_MAP.index(old_state['location']['map'])
+        
+        # progressed in map
+        if new_map_idx > old_map_idx:
+            return 1
+        # backed up
+        elif old_map_idx > new_map_idx:
+            return 0
+
+        # oak
+        if new_state['location']['map'] == "OAKS_LAB,":
+            if new_state['location']['y'] > old_state['location']['y']:
+                return 1
+            else:
+                return 0
+
+        if new_state['location']['map'] == "PALLET_TOWN,":
+            if new_state['location']['y'] < old_state['location']['y']:
+                return 1
+            else:
+                return 0
+
+        # route 1
+        if new_state['location']['map'] == "ROUTE_1,":
+            if new_state['location']['y'] < old_state['location']['y']:
+                return 1
+            else:
+                return 0
+            
+        return 0
     
     def _run_away_reward(self,new_state):
-        '''1 for the new stat as a result of running'''
         if new_state["battle_type"] == 0 and self.prior_game_stats['battle_type'] != 0 and self.prior_game_stats['menu_type'] == 33 and self.prior_game_stats["menu_item"] == 3:
             return 1
         else:
@@ -726,4 +704,3 @@ class PokemonBrock(PokemonEnvironment):
             if (old_levels[i] != 0):
                 reward += (new_levels[i] / old_levels[i] - 1)
         return reward
-

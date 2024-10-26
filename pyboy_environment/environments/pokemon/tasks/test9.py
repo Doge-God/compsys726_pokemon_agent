@@ -10,9 +10,7 @@
 # pp
 
 # reward for reset
-
-# reward health decrease
-# remove battle flag
+# directives
 
 
 
@@ -196,28 +194,40 @@ class PokemonBrock(PokemonEnvironment):
 
         x,y,idx = self.process_loc(game_stats)
 
+        # fight_flag = 0 
+        # if self.directive == 0: # level up directive, always fight
+        #     fight_flag = 1
+        # else: # on the way to brock
+        #     if battle_type == 2:
+        #         fight_flag = 1 # only fight gym battles
+        #     else:
+        #         fight_flag = 0 # run from wild fights
+
         if battle_type == 0:
             fight_flag = 0
         else:
             fight_flag = 1
+
+        
         
             
         info_vector = [
             # 1 byte int, normalize by max val
+            game_stats['directive'] if battle_type == 0 else 0,
             x,
             y,
             idx, 
-            1 if selected_move_pp > 0 else -1, # indicator for whether selected move has pp, only active when on that menu
+            fight_flag,
+            1 if selected_move_pp > 0 else 0, # indicator for whether selected move has pp, only active when on that menu
+            game_stats["should_fight"] if battle_type != 0 else 0 # should fight flag
         ]
 
-        # print(info_vector)
-
-        # print("-----------------------------------------------------------")
-        # print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
-        # print(f"Selected move PP: {selected_move_pp if fight_flag != 0 else 0}")
-        # print(game_stats['location']['map'])
-        # print(f"selected menu item {self._read_m(0xCC26)}")
-        # print(f"Bitmask current menu? {self._read_m(0xCC29)}")
+        print("-----------------------------------------------------------")
+        print(f"({round(game_stats['location']['x'],2)}, {round(game_stats['location']['y'],2)}, {round(map_index_normalized,2)}), BATTLE: {battle_type}, DIFF: {self.last_img_diff_cnt}")
+        print(f"Selected move PP: {selected_move_pp if fight_flag != 0 else 0}")
+        print(game_stats['location']['map'])
+        print(f"selected menu item {self._read_m(0xCC26)}")
+        print(f"Bitmask current menu? {self._read_m(0xCC29)}")
         
 
         return {
@@ -261,8 +271,8 @@ class PokemonBrock(PokemonEnvironment):
         # return (144,160)
         return {
             "image": (3, self.image_len, self.image_len),
-            #       coord  | pp  | 
-            "vector": 3 +    1     
+            #       directive | coord | in battle | should fight | pp  | 
+            "vector": 1+         3 +        1+          1  +        1     
         }
     
     #       coord | num poke ball | battle flag ||| my poke hp, other poke hp, catch rate
@@ -279,33 +289,35 @@ class PokemonBrock(PokemonEnvironment):
         reward = -1
         
         # NAV REWARD FOR STARTING WILD FIGHTS
-        # if directive == 0: # fight to level up
-        reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
-        reward += self._start_battle_reward(new_state) * 10 # normal battle
+        if directive == 0: # fight to level up
+            reward += self._grass_reward(new_state) * 0.5 #0.5 for touching grass
+            reward += self._start_battle_reward(new_state) * 10 # normal battle
         
-        # # DIRECTIVE UPDATED
-        # elif directive == 0 and new_state["directive"] == 1:
-        #     reward += 500
+        # DIRECTIVE UPDATED
+        elif directive == 0 and new_state["directive"] == 1:
+            reward += 500
 
-        # # NAV REWARD FOR TRYING TO FIGHT BROCK
-        # else:
-        #     reward += raw_map_prog_reward * 5000
-        #     reward += self._start_battle_reward(new_state,2) * 5000
+        # NAV REWARD FOR TRYING TO FIGHT BROCK
+        else:
+            reward += raw_map_prog_reward * 5000
+            reward += self._start_battle_reward(new_state,2) * 5000
 
 
-        # print(f"PASS TURN: {self._pass_turn_reward(new_state)}")
-        # print(f"Healed: {raw_heal_reward}")
-        # print(f"Truncate cnt: {self.truncate_cnt}")
+        print(f"PASS TURN: {self._pass_turn_reward(new_state)}")
+        print(f"Healed: {raw_heal_reward}")
+        print(f"Truncate cnt: {self.truncate_cnt}")
 
         # BATTLE REWARD
-        # if self.prior_game_stats['should_fight'] == 1: # should fight
-        reward += raw_xp_reward * 15
-        reward -= self._run_away_reward(new_state) * 10
-        reward += raw_heal_reward * 500
-        reward += self._levels_reward(new_state) * 500
-        reward += self._enemy_health_decrease_reward(new_state) * 10
-        reward += self._self_health_decrease_reward(new_state) * 10
-        reward += self._pass_turn_reward(new_state) * 10
+        if self.prior_game_stats['should_fight'] == 1: # should fight
+            reward += raw_xp_reward * 15
+            reward -= self._run_away_reward(new_state) * 10
+            reward += raw_heal_reward * 500
+            reward += self._levels_reward(new_state) * 500
+            reward += self._enemy_health_decrease_reward(new_state) * 10
+            reward += self._pass_turn_reward(new_state) * 10
+        else: # shouldnt fight, only reward for running
+            reward -= 1
+            reward += self._run_away_reward(new_state) * 10
 
         
         #### TRUNCATE COUNTER MANAGEMENT
@@ -313,10 +325,23 @@ class PokemonBrock(PokemonEnvironment):
             self.truncate_cnt += 1000
 
         # reset truncate count if xp gained
-        if raw_xp_reward == 0:
-            self.truncate_cnt -= 1
-        else:
-            self.truncate_cnt = 1000
+        if directive == 0:
+            if raw_xp_reward == 0:
+                self.truncate_cnt -= 1
+            else:
+                self.truncate_cnt = 1000
+
+        if directive == 1:
+            if raw_map_prog_reward == 0:
+                self.truncate_cnt -= 1
+            else:
+                self.truncate_cnt = 1500
+            
+            if self._start_battle_reward(new_state,2) != 0: #started trainer battle
+                self.truncate_cnt = 1000
+            else:
+                self.truncate_cnt -= 1
+
 
         # GENERAL
         reward += self.map_gradual_progress_reward(new_state) * 0.2
@@ -331,8 +356,6 @@ class PokemonBrock(PokemonEnvironment):
             reward -= 0.1
 
         # print(f"map_gradual {self.map_gradual_progress_reward(new_state)}")
-        
-        # print(f"REWARD: {reward}")
 
         return reward
 
@@ -534,6 +557,7 @@ class PokemonBrock(PokemonEnvironment):
             "menu_type": self._read_menu_type(),
             "menu_item": self._read_current_menu_item(),
             "turn_flag": self._read_turn(),
+            "should_fight:": self.calc_should_fight(),
             "directive": self.calc_directive()
         }
         return stats
@@ -674,16 +698,6 @@ class PokemonBrock(PokemonEnvironment):
             health_decrease = previous_health - current_health
             
             return max(0, health_decrease) # Doesn't punish when enemy health goes up
-        return 0
-    
-    def _self_health_decrease_reward(self, new_state):
-        if (new_state["battle_type"] != 0 and self.prior_game_stats["battle_type"] != 0):
-            previous_health = self.prior_game_stats["current_pokemon_health"]
-            current_health = new_state["current_pokemon_health"]
-
-            health_decrease = previous_health - current_health
-            
-            return max(0, health_decrease) # Doesn't punish when health goes up
         return 0
     
     def _xp_increase_reward(self, new_state: dict[str, any]) -> int:
